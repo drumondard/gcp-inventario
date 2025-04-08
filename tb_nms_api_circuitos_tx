@@ -1,0 +1,1 @@
+select * FROM `vtal-sandbox-engenharia.inventario_bases_gerencia.tb_nms_api_circuitos_tx`

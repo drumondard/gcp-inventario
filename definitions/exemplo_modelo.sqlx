@@ -1,0 +1,10 @@
+config {
+  type: "tb_estados_do_brasil",
+  tags: ["tb_estados_do_brasil"],
+  description: "Modelo de exemplo que copia dados de uma tabela de origem."
+}
+
+select
+  *
+from
+  `vtal-sandbox-engenharia.inventario_consolidacao_cabos.tb_estados_do_brasil`

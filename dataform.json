@@ -1,0 +1,9 @@
+{
+  "defaultSchema": "inventario",
+  "assertionSchema": "assertions",
+  "database": "vtal-sandbox-engenharia",
+  "schemaSuffix": "",
+  "warehouse": "bigquery",
+  "gcloudProjectId": "vtal-sandbox-engenharia",
+  "defaultDatabase": "vtal-sandbox-engenharia"
+}

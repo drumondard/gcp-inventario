@@ -1,0 +1,183 @@
+---CREATE OR REPLACE PROCEDURE `vtal-sandbox-engenharia.inventario_consolidacao_cabos.pr_consolidacao_cabos`()
+BEGIN
+  DECLARE vdata STRING;
+  DECLARE vstatus STRING;
+  DECLARE query STRING;
+
+  -- Define o mês anterior
+  SET vdata = FORMAT_DATE('%Y%m', DATE_SUB(CURRENT_DATE(), INTERVAL 1 MONTH));  
+
+  -- Obtém o status da validação
+  SET vstatus = (
+      SELECT CASE 
+                 WHEN COUNT(e.ds_uf) = COUNT(t.ds_uf) THEN 'OK' 
+                 ELSE 'NOK' 
+             END
+      FROM (
+          SELECT 'AL' AS ds_uf UNION ALL SELECT 'AM' UNION ALL SELECT 'AP' UNION ALL 
+          SELECT 'BA' UNION ALL SELECT 'CE' UNION ALL SELECT 'DF' UNION ALL 
+          SELECT 'ES' UNION ALL SELECT 'GO' UNION ALL SELECT 'MA' UNION ALL 
+          SELECT 'MG' UNION ALL SELECT 'PA' UNION ALL SELECT 'PB' UNION ALL 
+          SELECT 'PE' UNION ALL SELECT 'PI' UNION ALL SELECT 'PR' UNION ALL 
+          SELECT 'RJ' UNION ALL SELECT 'RN' UNION ALL SELECT 'RR' UNION ALL 
+          SELECT 'RS' UNION ALL SELECT 'SC' UNION ALL SELECT 'SE' UNION ALL 
+          SELECT 'SP'
+      ) e
+      LEFT JOIN (
+          SELECT DISTINCT ds_uf 
+          FROM `vtal-sandbox-engenharia.data_lake.vw_geosite_shapefile_lance_cabo_fibra_optica_mred`
+      ) t ON e.ds_uf = t.ds_uf
+  );
+
+  -- Se a validação falhar, interrompe a execução
+  IF vstatus = 'NOK' THEN
+    -- Opcional: Registrar em um log
+    INSERT INTO `vtal-sandbox-engenharia.inventario_logs_execucao.logs_execucao`
+    (dt_execucao, procedimento, mensagem)
+    VALUES (CURRENT_TIMESTAMP(), 'pr_consolidacao_cabos', 'Execução interrompida: Status NOK');
+    
+    RETURN;
+  END IF;
+
+  -- Se a validação passar, executa o restante da procedure
+  
+    EXECUTE IMMEDIATE FORMAT("""
+      CREATE OR REPLACE TABLE `vtal-sandbox-engenharia.inventario_consolidacao_cabos.tb_consolidacao_cabos_%s`
+      PARTITION BY DATE(DT_INSERT)
+      CLUSTER BY FONTE, CODIGO_IBGE_MUN, DT_INSERT AS
+        WITH consolidacao_cabos AS (
+          SELECT 
+              CODIGO_IBGE_MUN,
+              ANUF,
+              FID_LANCE_CABO,
+              UF,
+              MUNICIPIO,
+              LOCALIDADE,
+              TIPO_REDE,
+              TIPO_INSTALACAO,
+              TOTAL_FIBRAS,
+              ID_CABO,
+              MODELO_CABO,
+              ESTADO_PROJETO,
+              STATUS_CABO,
+              LANCE_Mz as LANCE_METROS,
+              LANCE_M,              
+              PROPRIETARIO,
+              FONTE AS FONTE_SISTEMA,
+              'NETWIN' AS FONTE,
+              CURRENT_TIMESTAMP() as DT_INSERT
+          FROM `vtal-sandbox-engenharia.inventario_consolidacao_cabos.vw_netwin_consolidacao_cabos`
+
+        UNION ALL
+
+          SELECT 
+            CODIGO_IBGE_MUN,
+            ANUF,
+            CHAVE_FID_CID as FID_LANCE_CABO,
+            UF,
+            MUNICIPIO,
+            LOCALIDADE,
+            TIPO_REDE,
+            TIPO_INSTALACAO,      
+            TOTAL_FIBRAS,      
+            '' AS ID_CABO,
+            MODELO_CABO,
+            ESTADO_PROJETO,
+            '' AS STATUS_CABO,
+            SAFE_CAST(REPLACE(LANCE_M, ',', '.') AS FLOAT64) AS TOTAL_METROS,
+            LANCE_M,
+            proprietario_terceiros,
+            FONTE AS FONTE_SISTEMA,
+            'NETWORKS' AS FONTE,
+            CURRENT_TIMESTAMP() as DT_INSERT
+          FROM `vtal-sandbox-engenharia.inventario_consolidacao_cabos.vw_networks_consolidacao_cabos` 
+
+        UNION ALL
+
+          SELECT 
+            CODIGO_IBGE_MUN,
+            ANUF,
+            CAST(nu_fidlcecb AS STRING) AS FID_LANCE_CABO,
+            UF,
+            MUNICIPIO,
+            LOCALIDADE,
+            TIPO_REDE,
+            TIPO_INSTALACAO,      
+            TOTAL_FIBRAS,
+            '' AS ID_CABO,
+            MODELO_CABO,
+            ESTADO_PROJETO,
+            '' AS STATUS_CABO,
+            SAFE_CAST(REPLACE(LANCE_KM, ',', '.') AS FLOAT64) AS TOTAL_METROS,
+            LANCE_KM,
+            PROPRIETARIO,                  
+            FONTE AS FONTE_SISTEMA,
+            'GEOSITE' AS FONTE,
+            CURRENT_TIMESTAMP() as DT_INSERT
+          FROM `vtal-sandbox-engenharia.inventario_consolidacao_cabos.vw_geosite_consolidacao_cabos`
+        )
+        SELECT DISTINCT
+          t1.CODIGO_IBGE_MUN,
+          t1.ANUF,
+          t1.FID_LANCE_CABO,
+          t1.UF,
+          t1.MUNICIPIO,
+          t1.LOCALIDADE,
+          CASE
+            WHEN t1.TIPO_REDE IS NOT NULL THEN t1.TIPO_REDE
+            WHEN t1.FID_LANCE_CABO = t3.FID_LANCE_CABO THEN t3.TIPO_REDE
+            ELSE NULL
+          END AS TIPO_REDE,  /* PARA OS CASOS NÃO PREENCHIDOS DO GEOSITE */
+          --t1.TIPO_REDE,
+          t1.TIPO_INSTALACAO,
+          t1.TOTAL_FIBRAS,
+          t1.ID_CABO,
+          t1.MODELO_CABO,
+          t1.ESTADO_PROJETO,
+          t1.STATUS_CABO,
+          t1.LANCE_METROS,
+          t1.LANCE_M,
+          t1.PROPRIETARIO,
+          t1.FONTE_SISTEMA,
+          t1.FONTE,
+          t1.DT_INSERT,
+          CASE
+            WHEN t1.FID_LANCE_CABO = CAST(t2.FID_LANCE_CABO AS STRING) THEN 'SIM'
+            ELSE NULL
+          END AS ABANDONADO,
+          t2.DATAHORA_ALTERACAO
+        FROM consolidacao_cabos t1
+        LEFT JOIN `vtal-sandbox-engenharia.inventario_consolidacao_cabos.vw_cabos_abondonados` t2
+          ON t1.FID_LANCE_CABO = CAST(t2.FID_LANCE_CABO AS STRING)
+        LEFT JOIN (SELECT CAST(FID_LANCE_CABO AS STRING) AS FID_LANCE_CABO, TIPO_REDE FROM `vtal-sandbox-engenharia.inventario_consolidacao_cabos.tb_congelada_cb_opt_gs_gx_202411` WHERE FONTE IN ('MRED_GOS', 'BTSA_GOS')) t3
+          ON t1.FID_LANCE_CABO = t3.FID_LANCE_CABO
+    """, vdata);
+
+    EXECUTE IMMEDIATE FORMAT("""
+        ALTER TABLE `vtal-sandbox-engenharia.inventario_consolidacao_cabos.tb_consolidacao_cabos_%s`
+        SET OPTIONS (
+          description = 'Alexandre - Tabela gerada pr_consolidacao_cabos: Mensal / geosite, geoplex e networks // cluster fonte, CODIGO_IBGE_MUN, DT_INSERT',
+          labels = [("consolidacao_cabos", "netwin")]
+        )
+    """, vdata);
+-------------------------------------------------------------------------------------------------
+/*
+ARMAZENA NO BUCKET
+*/
+
+  SET query = FORMAT("""
+      EXPORT DATA
+      OPTIONS (
+          uri='gs://vtal-land-zone-engenharia/inventario_backup/consolidacao_cabos/consolidacao_cabos_%s/consolidacao_cabos/tb_consolidacao_cabos_*.csv',
+          format = 'CSV',
+          overwrite = true,
+          header = true,
+          field_delimiter = ';'
+      ) AS
+      SELECT * FROM `vtal-sandbox-engenharia.inventario_consolidacao_cabos.tb_consolidacao_cabos_%s`;
+  """, vdata, vdata);
+
+  EXECUTE IMMEDIATE query;
+
+
+END;

@@ -1,4 +1,0 @@
-select
-  *
-from
-  `vtal-sandbox-engenharia.inventario_consolidacao_cabos.tb_estados_do_brasil`

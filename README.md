@@ -1,1 +1,1 @@
-Repositorio de codigos - inventário
+Repositorio de codigos - Inventário
